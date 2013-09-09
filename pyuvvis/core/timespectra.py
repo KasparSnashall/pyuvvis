@@ -1509,6 +1509,7 @@ if __name__ == '__main__':
 #    print ts.pca_evals
     print ts._pca.mean_.shape
     print ts.pca
+    print ts.pca_evals
     raise SystemError
 
     #from pandas import Panel

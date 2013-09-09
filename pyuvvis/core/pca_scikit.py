@@ -128,6 +128,11 @@ class PCA():
         self.n_components = n_components
         self.copy = copy
         self.whiten = whiten        
+        
+        # Not implemented because I need to understand it better, including 
+        # ANy effects it might have on Correlation Analysis
+        if self.whiten:
+            raise NotImplementedError('Whitening is not yet implemented.')
 
     def fit(self, X, y=None, **params):
         """Fit the model with X.
@@ -143,8 +148,18 @@ class PCA():
         self : object
             Returns the instance itself.
         """
-        self._fit(X, **params)
+        self.U, self.S, self.VT = self._fit(X, **params)
         return self
+    
+    #@property
+    #def covariance(self):
+        #if not getattr('U', self, None):
+            #raise AttributeError('Please run .fit or .fit transform.') #Make custom error
+        
+        ## n is the length of a row (2048) (but this might be nsamples according to this)
+        #C = 1.0 / (n? - 1)
+        ## C = 1/(n-1) * X XT = 1/(n-1) * U S**2 UT
+        #return C * self.U * self.S**2 * self.U.T #This work?
 
     def fit_transform(self, X, y=None, **params):
         """Fit the model with X and apply the dimensionality reduction on X.
@@ -161,6 +176,7 @@ class PCA():
 
         """
         U, S, VT = self._fit(X, **params)
+        self.U = U ; self.S = S ; self.VT = VT
         U = U[:, :self.n_components]
         
         logger.debug('U, S, VT shapes: %s %s %s' % (U.shape, S.shape, VT.shape))
@@ -178,6 +194,7 @@ class PCA():
         X = array2d(X)
         n_samples, n_features = X.shape
         X = as_float_array(X, copy=self.copy)
+        
         # Center data by subtracing mean from sample axis (eg intensity avg)
         self.mean_ = np.mean(X, axis=0) #When transposed, this works fine
         
@@ -185,15 +202,16 @@ class PCA():
         print '_fit: data.shape %s, mean.shape %s'% (X.shape, self.mean_.shape)
         print 'time mean.shape %s', np.mean(X, axis=1).shape
         
-#        X -= self.mean_
+        X -= self.mean_
+        U, S, VT = linalg.svd(X, full_matrices=False)
 
-        X = (X.transpose() - np.mean(X, axis=1)).transpose()
-        U, S, VT = linalg.svd(X.transpose(), full_matrices=False)
+#        X = (X.transpose() - np.mean(X, axis=1)).transpose()
+#        U, S, VT = linalg.svd(X.transpose(), full_matrices=False)
         
         # How much variance is explained by just the projected data.
         self.explained_variance_ = (S ** 2) / n_samples
         self.explained_variance_ratio_ = self.explained_variance_ / \
-                                        self.explained_variance_.sum()
+                                        self.explained_variance_.sum() #(Total variance is sum of diagonal)
 
         if self.whiten:
             self.components_ = VT / S[:, np.newaxis] * np.sqrt(n_samples)
@@ -278,7 +296,7 @@ class PCA():
                    ]
 
         try:
-            init_parms.append(('Training', 'complete\n%s- %s samples / %s features' \
+            init_parms.append(('Training', 'complete\n%s- %s samples / %s features(BUT THESE BECOME COMPONENTS)' \
                               % (indent, self.n_samples, self.n_features)))
         
         except AttributeError:
