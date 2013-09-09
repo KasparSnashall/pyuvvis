@@ -1,10 +1,16 @@
 import numpy as np
 from scipy import linalg
 
+# Logging
+from pyuvvis.logger import logclass
+import logging
+logger = logging.getLogger(__name__)
+
 def array2d(X, dtype=None, order=None):
     """Returns at least 2-d array with data from X"""
     return np.asarray(np.atleast_2d(X), dtype=dtype, order=order)
 
+# May want to use this in other areas of pyuvvis
 def as_float_array(X, copy=True):
     """Converts an array-like to an array of floats
 
@@ -37,6 +43,7 @@ def as_float_array(X, copy=True):
         X = X.astype(np.float64)
     return X
 
+@logclass(log_name=__name__, public_lvl='debug')
 class PCA():
     """Principal component analysis (PCA)
 
@@ -117,13 +124,10 @@ class PCA():
     KernelPCA
     SparsePCA
     """
-    def __init__(self, n_components=None, copy=True, whiten=False, index=None):
+    def __init__(self, n_components=None, copy=True, whiten=False):
         self.n_components = n_components
         self.copy = copy
-        self.whiten = whiten
-        
-        if index is not None:
-            self.index=index
+        self.whiten = whiten        
 
     def fit(self, X, y=None, **params):
         """Fit the model with X.
@@ -147,7 +151,7 @@ class PCA():
 
         Parameters
         ----------
-        X : array-like, shape (n_samples, n_features)
+        X : array-like, shape (n_samples, n_features) (FEATURES IS WHAT GETS REDUCED)
             Training data, where n_samples in the number of samples
             and n_features is the number of features.
 
@@ -158,6 +162,8 @@ class PCA():
         """
         U, S, VT = self._fit(X, **params)
         U = U[:, :self.n_components]
+        
+        logger.debug('U, S, VT shapes: %s %s %s' % (U.shape, S.shape, VT.shape))
 
         if self.whiten:
             # X_new = X * V / S * sqrt(n_samples) = U * sqrt(n_samples)
@@ -172,10 +178,19 @@ class PCA():
         X = array2d(X)
         n_samples, n_features = X.shape
         X = as_float_array(X, copy=self.copy)
-        # Center data
+        # Center data by subtracing mean from sample axis (eg intensity avg)
         self.mean_ = np.mean(X, axis=0) #When transposed, this works fine
-        X -= self.mean_
-        U, S, VT = linalg.svd(X, full_matrices=False)
+        
+        logger.debug('_fit: data.shape %s, mean.shape %s' % (X.shape, self.mean_.shape))
+        print '_fit: data.shape %s, mean.shape %s'% (X.shape, self.mean_.shape)
+        print 'time mean.shape %s', np.mean(X, axis=1).shape
+        
+#        X -= self.mean_
+
+        X = (X.transpose() - np.mean(X, axis=1)).transpose()
+        U, S, VT = linalg.svd(X.transpose(), full_matrices=False)
+        
+        # How much variance is explained by just the projected data.
         self.explained_variance_ = (S ** 2) / n_samples
         self.explained_variance_ratio_ = self.explained_variance_ / \
                                         self.explained_variance_.sum()
@@ -206,6 +221,10 @@ class PCA():
                     self.explained_variance_[:self.n_components]
             self.explained_variance_ratio_ = \
                     self.explained_variance_ratio_[:self.n_components]
+
+        # Added by Adam
+        self.eigen_values_ = self.explained_variance_ * n_samples
+        self.n_samples, self.n_features = n_samples, n_features
 
         return (U, S, VT)
 
@@ -248,6 +267,27 @@ class PCA():
         """
         return np.dot(X, self.components_) + self.mean_
     
+    # Replace with pretty print
+    def __repr__(self):       
 
-    def __repr__(self): 
-        return 'YEAHH BOY'
+        indent = ' ' * 4        
+            
+        init_parms=[
+            ('components' , self.n_components),
+            ('whitening' , self.whiten)
+                   ]
+
+        try:
+            init_parms.append(('Training', 'complete\n%s- %s samples / %s features' \
+                              % (indent, self.n_samples, self.n_features)))
+        
+        except AttributeError:
+            init_parms.append(('Training', 'incomplete\n%s - See pca.fit() or '
+            'pca.fit_transform()...' % indent))
+                   
+        
+            # Feature dimensions
+        return 'PCA:\n----\n%s' % \
+            ((indent+'\n').join((k + ':' + indent + str(v))  for k,v in init_parms))
+
+       

@@ -7,20 +7,13 @@ from types import NoneType, MethodType
 from operator import itemgetter
 
 import numpy as np
+
 from pandas import DataFrame, DatetimeIndex, Index, Series, date_range
 from scipy import integrate
-#from scikits.learn import PCA
-from pca_scikit import PCA
+from pca_scikit import PCA #To remove package dependency
 
 from pyuvvis.pandas_utils.metadframe import MetaDataFrame, _MetaIndexer
 from pyuvvis.logger import log, configure_logger, decode_lvl, logclass
-
-from pandas import DataFrame, DatetimeIndex, Index, Series
-from scipy import integrate
-#from scikits.learn import PCA
-from pca_scikit import PCA
-
-# pyuvvis imports 
 from pyuvvis.core.specindex import SpecIndex, specunits, get_spec_category, \
      set_sindex
 from pyuvvis.core.spec_labeltools import datetime_convert, from_T, to_T, \
@@ -36,6 +29,9 @@ tunits={'ns':'Nanoseconds', 'us':'Microseconds', 'ms':'Milliseconds', 's':'Secon
         'm':'Minutes', 'h':'Hours','d':'Days', 'y':'Years'}  #ADD NULL VALUE? Like None:'No Time Unit' (iunit/specunit do this)
 
 logger = logging.getLogger(__name__) 
+   
+
+# See as_float_array in pca_skikit   
    
 ##########################################
 ## TimeSpectra Private Utilities   #######
@@ -599,46 +595,50 @@ class TimeSpectra(MetaDataFrame):
         '''
         return self.wavelength_slices((min(self.index), max(self.index)), apply_fcn=apply_fcn)
     
+    ##################
+    # PCA INTERFACE ##
+    ##################
+
+    _pca = None   
     
-    # PCA INTERFACE #    
-    _pca=None   #Instance method?
-    
+    # Make this a decorator
     def _pcagate(self, attr):
         ''' Raise an error if use calls inaccessible PCA method.'''
         if not self._pca:
-            raise AttributeError('Please run .pca() method before calling %s'%attr)    
+            raise AttributeError('Please run %s.pca() method before calling %s'
+                                 % (self.full_name, attr) )
         
-    def run_pca(self, n_components=None, fit_transform=True):# k=None, kernel=None, extern=False):           
-            '''         
-
-            Adaptation of Alexis Mignon's pca.py script
-            
-            Adapted to fit PyUvVis 5/6/2013.  
-            Original credit to Alexis Mignon:
-            Module for Principal Component Analysis.
-    
-            Author: Alexis Mignon (c)
-            Date: 10/01/2012
-            e-mail: alexis.mignon@gmail.com
-            (https://code.google.com/p/pypca/source/browse/trunk/PCA.py)
-                        
-            Constructor arguments:
-            * k: number of principal components to compute. 'None'
-                 (default) means that all components are computed.
-            * kernel: perform PCA on kernel matrices (default is False)
-            * extern: use extern product to perform PCA (default is 
-                   False). Use this option when the number of samples
-                   is much smaller than the number of features.            
-
-            See pca.py constructor for more info.
+    def run_pca(self, n_components=None, fit_transform=True):# copy=True, whiten=False         
+            ''' Wrapper to scikits PCA algorithm.  All credit goes to the scikitlearn
+            team(http://scikit-learn.org/stable/). See pca_skicit.PCA() doc for 
+            full documentation.
             
             This will initialize PCA class and fit current values of timespectra.
+            self.index is used directly from self.
             
-            Notes:
-            ------
-                The pcakernel.py module is more modular.  These class methods
-                make it easier to perform PCA on a timespectra, but are less 
-                flexible than using the module functions directly.
+            Parameters
+            ----------
+            n_components : int, None or string
+                Number of components to keep.
+                if n_components is not set all components are kept::
+        
+                    n_components == min(n_samples, n_features)
+        
+                if n_components == 'mle', Minka\'s MLE is used to guess the dimension
+                if ``0 < n_components < 1``, select the number of components such that
+                the amount of variance that needs to be explained is greater than the
+                percentage specified by n_components       
+                
+            fit_transform : bool
+                If false, the model is fit with self._df.transpose().  
+                If true, the model is fit AND the dimensionality reduction is 
+                applied and returned.
+                
+                
+            
+            Notes
+            -----
+                Data will be centered (the mean is suctracted)
             
                 timespectra gets transposed as PCA module expects rows as 
                 samples and columns as features.
@@ -646,14 +646,24 @@ class TimeSpectra(MetaDataFrame):
                 Changes to timespectra do not retrigger PCA refresh.  This 
                 method should be called each time changes are made to the data.
                 
+                The pca_scikit.py module is more modular.  These class methods
+                make it easier to perform PCA on a timespectra, but are less 
+                flexible than using the module functions directly.
                 
             '''
-            self._pca=PCA(n_components=n_components, index=self.index)                
+
+            if self._pca:
+                logger.warn('Overwriting existing PCA analysis...')
+            
+            self._pca = PCA(n_components=n_components)                
+
+            # Return new data
             if fit_transform:
-                return self._pca.fit_transform(self._df.transpose())
+                logger.info('Returing eigenvectors.')
+                return self._pca.fit_transform(self)#._df.transpose())
             else:    
-                self._pca.fit(self._df.transpose())
-                
+                self._pca.fit(self.tranpose(self))#._df.transpose())
+                logger.info('Fitting complete.')
                         
     @property
     def pca(self):
@@ -665,17 +675,20 @@ class TimeSpectra(MetaDataFrame):
         self._pcagate('eigen values')
         # Index is not self.columns because eigenvalues are still computed with
         # all timepoints, not a subset of the columns        
-        return Series(self._pca.eigen_values_)
+
+        return Series(self._pca.eigen_values_) #INDEX = self.index
+
     
     @property
     def pca_evecs(self):
         self._pcagate('eigen vectors')
-        return DataFrame(self._pca.eigen_vectors_)
+        return DataFrame(self._pca.components_) #Transpose/INDEX?
             
     def load_vec(self, k):
         ''' Return loading vector series for k.  If k > number of components
             computed with runpca(), this raises an error rather than 
             recomputing.'''
+        
         self._pcagate('load_vec')
         if k > len(ts.columns):
             raise AttributeError('Principle components must be <= number of timepoints %s'%len(ts))
@@ -1484,16 +1497,19 @@ if __name__ == '__main__':
    
     from pyuvvis.IO.gwu_interfaces import from_spec_files, get_files_in_dir
     from pyuvvis.exampledata import get_exampledata
-    ts=from_spec_files(get_files_in_dir(get_exampledata('NPSAM'), sort=True), name='foofromfile')
+    ts = from_spec_files(get_files_in_dir(get_exampledata('NPSAM'), sort=True), name='foofromfile')
 
     ts.to_interval('s')
     ts=ts.ix[440.0:700.0,0.0:100.0]
     ts.reference=0    
-    print ts._baseline.shape, ts.shape
     
     # Goes to site packages because using from_spec_files, which is site package module
+    print ts.shape, 'ts shape'
     ts.run_pca()
- #   ts.pca_evals
+#    print ts.pca_evals
+    print ts._pca.mean_.shape
+    print ts.pca
+    raise SystemError
 
     #from pandas import Panel
     #Panel._constructor_sliced=TimeSpectra
